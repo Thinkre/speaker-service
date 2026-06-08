@@ -18,7 +18,7 @@ _FRAME_MS = 10                               # FireRed VAD outputs 10ms frames
 
 # Default model path — resolved relative to CWD at runtime.
 # Override via FIRERED_VAD_PATH env var.
-_DEFAULT_RELATIVE = "models/FireRedVAD/Stream-VAD"
+_DEFAULT_RELATIVE = "./models/FireRedVAD/Stream-VAD"
 
 
 class FireRedVADEngine:
