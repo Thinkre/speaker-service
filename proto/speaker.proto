@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package speaker;
+
+service SpeakerService {
+  // 从 PCM 音频中提取说话人嵌入向量
+  rpc ExtractEmbedding (ExtractRequest) returns (ExtractResponse);
+}
+
+message ExtractRequest {
+  bytes  pcm    = 1;  // int16 mono 16kHz PCM，建议时长 > 500ms
+  string engine = 2;  // "eresnetv2" | "campplus"，默认 eresnetv2
+}
+
+message ExtractResponse {
+  repeated float embedding = 1;  // L2-normalized float32 向量
+  int32          dim       = 2;  // 向量维度（ERes2Net: 192，CamPlus: 192）
+  bool           success   = 3;
+}
