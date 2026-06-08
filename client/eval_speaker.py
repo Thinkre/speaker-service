@@ -150,20 +150,31 @@ def _build_pairs(
         for a, b in itertools.combinations(idxs, 2):
             pos_pairs.append((a, b))
 
-    neg_pairs: list[tuple[int, int]] = []
-    for s1, s2 in itertools.combinations(speakers, 2):
-        for a in by_spk[s1]:
-            for b in by_spk[s2]:
-                neg_pairs.append((a, b))
+    # Lazily sample negative pairs without enumerating the full Cartesian product.
+    rng = random.Random(42)
+    speaker_pairs = list(itertools.combinations(speakers, 2))
+    n_neg_needed = min(len(pos_pairs), max_pairs // 2)
+    neg_sample: list[tuple[int, int]] = []
+    seen: set[tuple[int, int]] = set()
+    max_attempts = n_neg_needed * 10
+    attempts = 0
+    while len(neg_sample) < n_neg_needed and attempts < max_attempts:
+        s1, s2 = rng.choice(speaker_pairs)
+        a = rng.choice(by_spk[s1])
+        b = rng.choice(by_spk[s2])
+        key = (min(a, b), max(a, b))
+        if key not in seen:
+            seen.add(key)
+            neg_sample.append((a, b))
+        attempts += 1
 
-    # balance and cap
-    n = min(len(pos_pairs), len(neg_pairs), max_pairs // 2)
+    n = min(len(pos_pairs), len(neg_sample), max_pairs // 2)
     if n == 0:
         return [], []
 
     random.seed(42)
     pos_sample = random.sample(pos_pairs, n)
-    neg_sample = random.sample(neg_pairs, n)
+    neg_sample = neg_sample[:n]
 
     scores: list[float] = []
     labels: list[int] = []
@@ -180,8 +191,6 @@ def _build_pairs(
 # ── metrics ───────────────────────────────────────────────────────────────────
 
 def _eer(scores: list[float], labels: list[int]) -> float:
-    from scipy.interpolate import interp1d
-
     scores_arr = np.array(scores)
     labels_arr = np.array(labels)
     thresholds = np.sort(np.unique(scores_arr))

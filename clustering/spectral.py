@@ -177,18 +177,15 @@ class SpectralClusterer:
     def _build_affinity(self, embeddings: list[np.ndarray]) -> np.ndarray:
         """Build affinity matrix following WeSpeaker's approach.
 
-        Cosine similarity mapped to [0,1] via 0.5*(1+cos).  Pruning is applied
-        only when n >= _PRUNE_MIN_N — below that threshold the prune creates a
-        near-uniform graph that destroys the eigengap signal.
+        Cosine similarity mapped to [0,1] via 0.5*(1+cos).  Embeddings are
+        already L2-normalised at this point, so dot-product == cosine similarity.
+        Vectorised via BLAS matmul — O(n²·d) Python loop replaced by one call.
+        Pruning applied only when n >= _PRUNE_MIN_N.
         """
-        n = len(embeddings)
-        cosine = np.zeros((n, n), dtype=np.float32)
-        for i in range(n):
-            for j in range(i, n):
-                # 0.5*(1+cos) maps cosine ∈ [-1,1] → [0,1], same as WeSpeaker
-                sim = float(0.5 * (1.0 + _cosine_sim(embeddings[i], embeddings[j])))
-                cosine[i, j] = cosine[j, i] = sim
-        return _maybe_prune(cosine)
+        E = np.stack(embeddings)  # (n, d), already L2-normalised
+        cosine = 0.5 * (1.0 + E @ E.T)
+        np.fill_diagonal(cosine, 1.0)
+        return _maybe_prune(cosine.astype(np.float32))
 
     def _detect_n_components(self, affinity: np.ndarray) -> int:
         if self._cfg.n_components is not None:

@@ -6,8 +6,8 @@ Request (JSON):
     url         string   optional  WAV audio URL (16kHz mono)
     base64      string   optional  base64-encoded WAV bytes
     model       string   required  "eresnetv2" | "campplus"
-    normalize   bool     optional  default true
-    user        string   required  caller identifier
+    normalize   bool     optional  always true (L2-normalised by model)
+    user        string   required  caller identifier (logged per request)
 
 Response (JSON):
     embeddings  list     each item: {id, start, end, confidence, embedding, dimensions}
@@ -15,33 +15,64 @@ Response (JSON):
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
+import logging
+import threading
 import wave
+from contextlib import asynccontextmanager
 from typing import Any
 
+import httpx
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, field_validator
+from scipy.signal import resample_poly
 
-from engine.eres2net import ERes2NetEngine
-from engine.campplus import CamPlusEngine
+load_dotenv()
 
-app = FastAPI(title="Speaker Embedding Service", version="1.0.0")
+logger = logging.getLogger(__name__)
 
+# ── constants ─────────────────────────────────────────────────────────────────
+MAX_PAYLOAD_BYTES = 50 * 1024 * 1024   # 50 MB hard limit
+INFERENCE_TIMEOUT = 30.0               # seconds before 504
+
+# ── engine cache (thread-safe) ────────────────────────────────────────────────
 _engines: dict[str, Any] = {}
+_engines_lock = threading.Lock()
 
 
 def _get_engine(model: str):
     key = model.lower()
     if key not in _engines:
-        if key in ("eresnetv2", "eres2net"):
-            _engines[key] = ERes2NetEngine()
-        elif key == "campplus":
-            _engines[key] = CamPlusEngine()
-        else:
-            raise HTTPException(status_code=400, detail=f"Unknown model: {model!r}. Use eresnetv2 or campplus.")
+        with _engines_lock:
+            if key not in _engines:
+                if key in ("eresnetv2", "eres2net"):
+                    from engine.eres2net import ERes2NetEngine
+                    _engines[key] = ERes2NetEngine()
+                elif key == "campplus":
+                    from engine.campplus import CamPlusEngine
+                    _engines[key] = CamPlusEngine()
+                else:
+                    raise HTTPException(status_code=400, detail=f"Unknown model: {model!r}.")
     return _engines[key]
+
+
+# ── shared HTTP client (reused across requests) ───────────────────────────────
+_http_client: httpx.AsyncClient | None = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _http_client
+    _http_client = httpx.AsyncClient(timeout=httpx.Timeout(connect=5, read=30, write=10, pool=5))
+    yield
+    await _http_client.aclose()
+
+
+app = FastAPI(title="Speaker Embedding Service", version="1.0.0", lifespan=lifespan)
 
 
 # ── models ────────────────────────────────────────────────────────────────────
@@ -50,7 +81,7 @@ class EmbeddingRequest(BaseModel):
     url: str | None = None
     base64: str | None = None
     model: str
-    normalize: bool = True
+    normalize: bool = True   # always L2-normalised; field kept for API compatibility
     user: str
 
     @field_validator("model")
@@ -79,47 +110,66 @@ class EmbeddingResponse(BaseModel):
 
 def _wav_to_pcm(wav_bytes: bytes) -> tuple[bytes, int, float]:
     with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
+        if wf.getnchannels() != 1:
+            raise ValueError(f"Expected mono WAV, got {wf.getnchannels()} channels.")
         sr = wf.getframerate()
         n = wf.getnframes()
         return wf.readframes(n), sr, n / sr
 
 
 def _resample(pcm: bytes, src_sr: int, dst_sr: int = 16000) -> bytes:
-    if src_sr == dst_sr:
-        return pcm
+    logger.warning("Resampling audio from %dHz to %dHz — use 16kHz input for best quality", src_sr, dst_sr)
     samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
-    new_len = int(len(samples) * dst_sr / src_sr)
-    resampled = np.interp(
-        np.linspace(0, len(samples) - 1, new_len),
-        np.arange(len(samples)),
-        samples,
-    ).astype(np.int16)
+    resampled = resample_poly(samples, dst_sr, src_sr).astype(np.int16)
     return resampled.tobytes()
+
+
+# ── health ────────────────────────────────────────────────────────────────────
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+@app.get("/ready")
+async def ready():
+    try:
+        _get_engine("eresnetv2")
+        return {"status": "ready"}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
 
 
 # ── route ─────────────────────────────────────────────────────────────────────
 
 @app.post("/v1/audio/speaker/embedding", response_model=EmbeddingResponse)
-async def speaker_embedding(req: EmbeddingRequest) -> EmbeddingResponse:
-    # load audio bytes
+async def speaker_embedding(req: EmbeddingRequest, http_req: Request) -> EmbeddingResponse:
+    logger.info("embedding request user=%s model=%s", req.user, req.model)
+
+    # ── load audio bytes ──────────────────────────────────────────────────────
     if req.base64:
+        if len(req.base64) > MAX_PAYLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="Audio payload too large (max 50MB).")
         try:
             wav_bytes = base64.b64decode(req.base64)
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid base64 encoding.")
+
     elif req.url:
         try:
-            import httpx
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                r = await client.get(req.url)
-                r.raise_for_status()
-                wav_bytes = r.content
+            r = await _http_client.get(req.url)
+            r.raise_for_status()
+            if len(r.content) > MAX_PAYLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="Audio URL content too large (max 50MB).")
+            wav_bytes = r.content
+        except HTTPException:
+            raise
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Failed to fetch URL: {exc}")
     else:
         raise HTTPException(status_code=400, detail="Provide either url or base64.")
 
-    # decode WAV → PCM
+    # ── decode WAV → PCM ──────────────────────────────────────────────────────
     try:
         pcm, sr, duration = _wav_to_pcm(wav_bytes)
     except Exception as exc:
@@ -128,20 +178,19 @@ async def speaker_embedding(req: EmbeddingRequest) -> EmbeddingResponse:
     if sr != 16000:
         pcm = _resample(pcm, sr)
 
-    # extract embedding
+    # ── extract embedding (with timeout) ──────────────────────────────────────
     try:
         engine = _get_engine(req.model)
-        result = await engine.extract(pcm)
+        result = await asyncio.wait_for(engine.extract(pcm), timeout=INFERENCE_TIMEOUT)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Inference timed out.")
     except HTTPException:
         raise
     except Exception as exc:
-        return EmbeddingResponse(embeddings=[], error=str(exc))
+        raise HTTPException(status_code=500, detail=f"Inference error: {exc}")
 
     if result is None:
-        return EmbeddingResponse(
-            embeddings=[],
-            error="Extraction failed (audio too short or model error).",
-        )
+        raise HTTPException(status_code=422, detail="Extraction failed (audio too short or model error).")
 
     vec: np.ndarray = result.vector
     return EmbeddingResponse(
@@ -161,8 +210,7 @@ async def speaker_embedding(req: EmbeddingRequest) -> EmbeddingResponse:
 if __name__ == "__main__":
     import os
     import uvicorn
-    from dotenv import load_dotenv
-    load_dotenv()
+    logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
     uvicorn.run(
         app,
         host=os.environ.get("HOST", "0.0.0.0"),

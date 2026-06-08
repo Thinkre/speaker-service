@@ -128,7 +128,9 @@ class FireRedVADEngine:
                 self._silence_ms += chunk_ms
                 self._speech_buf.append(pcm_bytes)
                 if self._silence_ms >= self._min_silence_ms:
-                    end_ms = self._elapsed_ms - self._silence_ms + self._speech_pad_ms
+                    # _elapsed_ms points to start of current chunk; add chunk_ms to
+                    # include it, then subtract accumulated silence.
+                    end_ms = self._elapsed_ms + chunk_ms - self._silence_ms + self._speech_pad_ms
                     segments.append(SpeechSegment(
                         start_ms=self._speech_start_ms,
                         end_ms=end_ms,

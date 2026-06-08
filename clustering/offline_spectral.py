@@ -12,7 +12,7 @@ import numpy as np
 from sklearn.cluster import SpectralClustering
 
 from .base import _cosine_sim
-from .spectral import _prune_affinity, _eigengap_n_components
+from .spectral import _prune_affinity, _eigengap_n_components, _maybe_prune, _PRUNE_MIN_N
 
 
 @dataclass
@@ -46,19 +46,15 @@ class OfflineSpectralClusterer:
                 embs[i] = e / norm
 
         n = len(embs)
-        # Build WeSpeaker-style affinity: 0.5*(1+cos), then top-K prune
-        cosine = np.zeros((n, n), dtype=np.float32)
-        for i in range(n):
-            for j in range(i, n):
-                sim = float(0.5 * (1.0 + _cosine_sim(embs[i], embs[j])))
-                cosine[i, j] = cosine[j, i] = sim
+        # Build WeSpeaker-style affinity: 0.5*(1+cos), then top-K prune.
+        # Vectorised: stack into matrix and use BLAS matmul (embeddings already L2-normalised).
+        E = np.stack(embs)  # (n, d)
+        cosine = 0.5 * (1.0 + E @ E.T)
+        np.fill_diagonal(cosine, 1.0)
+        cosine = cosine.astype(np.float32)
 
-        # _prune_affinity requires n > keep+2 (keep = min(10, n-2))
-        # For very small n just use raw cosine similarity without pruning
-        if n >= 4:
-            affinity = _prune_affinity(cosine)
-        else:
-            affinity = cosine
+        # Apply prune only when n >= _PRUNE_MIN_N to avoid eigengap collapse on small matrices.
+        affinity = _maybe_prune(cosine)
 
         if self._cfg.n_components is not None:
             k = min(self._cfg.n_components, n)

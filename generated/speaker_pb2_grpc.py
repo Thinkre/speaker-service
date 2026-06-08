@@ -45,8 +45,7 @@ class SpeakerServiceServicer:
     """Missing associated documentation comment in .proto file."""
 
     def ExtractEmbedding(self, request, context):
-        """从 PCM 音频中提取说话人嵌入向量
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')

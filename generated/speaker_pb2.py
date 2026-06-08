@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rspeaker.proto\x12\x07speaker\"-\n\x0e\x45xtractRequest\x12\x0b\n\x03pcm\x18\x01 \x01(\x0c\x12\x0e\n\x06\x65ngine\x18\x02 \x01(\t\"B\n\x0f\x45xtractResponse\x12\x11\n\tembedding\x18\x01 \x03(\x02\x12\x0b\n\x03\x64im\x18\x02 \x01(\x05\x12\x0f\n\x07success\x18\x03 \x01(\x08\x32W\n\x0eSpeakerService\x12\x45\n\x10\x45xtractEmbedding\x12\x17.speaker.ExtractRequest\x1a\x18.speaker.ExtractResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rspeaker.proto\x12\x07speaker\"-\n\x0e\x45xtractRequest\x12\x0b\n\x03pcm\x18\x01 \x01(\x0c\x12\x0e\n\x06\x65ngine\x18\x02 \x01(\t\"Y\n\x0f\x45xtractResponse\x12\x11\n\tembedding\x18\x01 \x03(\x02\x12\x0b\n\x03\x64im\x18\x02 \x01(\x05\x12\x0f\n\x07success\x18\x03 \x01(\x08\x12\x15\n\rerror_message\x18\x04 \x01(\t2W\n\x0eSpeakerService\x12\x45\n\x10\x45xtractEmbedding\x12\x17.speaker.ExtractRequest\x1a\x18.speaker.ExtractResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -34,7 +34,7 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_EXTRACTREQUEST']._serialized_start=26
   _globals['_EXTRACTREQUEST']._serialized_end=71
   _globals['_EXTRACTRESPONSE']._serialized_start=73
-  _globals['_EXTRACTRESPONSE']._serialized_end=139
-  _globals['_SPEAKERSERVICE']._serialized_start=141
-  _globals['_SPEAKERSERVICE']._serialized_end=228
+  _globals['_EXTRACTRESPONSE']._serialized_end=162
+  _globals['_SPEAKERSERVICE']._serialized_start=164
+  _globals['_SPEAKERSERVICE']._serialized_end=251
 # @@protoc_insertion_point(module_scope)
