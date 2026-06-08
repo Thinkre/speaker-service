@@ -1,5 +1,7 @@
 models/
 reports/
+data/
+tmp/
 __pycache__/
 *.pyc
 .venv/
