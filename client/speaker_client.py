@@ -1,68 +1,76 @@
-"""Speaker Embedding gRPC client SDK."""
+"""Speaker Embedding HTTP client SDK — wraps POST /v1/audio/speaker/embedding."""
+
 from __future__ import annotations
 
+import base64
+import io
 import logging
 import os
-import sys
+import wave
 
-import grpc
+import httpx
 import numpy as np
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from generated import speaker_pb2, speaker_pb2_grpc
 
 logger = logging.getLogger(__name__)
 
 
+def _pcm_to_wav_b64(pcm: bytes, sr: int = 16000) -> str:
+    """Encode int16 mono PCM as base64 WAV."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
+        wf.writeframes(pcm)
+    return base64.b64encode(buf.getvalue()).decode()
+
+
 class SpeakerClient:
-    """Thin wrapper around the SpeakerService gRPC stub."""
+    """Thin wrapper around the Speaker Embedding HTTP API."""
 
     def __init__(
         self,
         host: str = "localhost",
-        port: int = 50052,
-        timeout: float = 15.0,
-        tls: bool = False,
-        wait_for_ready: bool = False,
-        connect_timeout: float = 5.0,
+        port: int = 8080,
+        timeout: float = 30.0,
+        token: str | None = None,
     ) -> None:
-        addr = f"{host}:{port}"
-        if tls:
-            credentials = grpc.ssl_channel_credentials()
-            self._channel = grpc.secure_channel(addr, credentials)
-        else:
-            self._channel = grpc.insecure_channel(addr)
-
-        if wait_for_ready:
-            try:
-                grpc.channel_ready_future(self._channel).result(timeout=connect_timeout)
-            except grpc.FutureTimeoutError:
-                self._channel.close()
-                raise ConnectionError(f"Could not connect to gRPC server at {addr} within {connect_timeout}s")
-
-        self._stub = speaker_pb2_grpc.SpeakerServiceStub(self._channel)
-        self._timeout = timeout
+        self._url = f"http://{host}:{port}/v1/audio/speaker/embedding"
+        self._token = token or os.environ.get("API_TOKEN", "")
+        self._client = httpx.Client(timeout=timeout)
 
     def extract_embedding(
         self,
         pcm: bytes,
         engine: str = "eresnetv2",
+        user: str = "speaker-client",
     ) -> np.ndarray | None:
-        """Extract L2-normalized speaker embedding. Returns None on failure."""
-        req = speaker_pb2.ExtractRequest(pcm=pcm, engine=engine)
+        """Extract L2-normalized speaker embedding from int16 mono 16kHz PCM.
+
+        Returns None on failure.
+        """
+        b64 = _pcm_to_wav_b64(pcm)
+        headers = {"Authorization": f"Bearer {self._token}"} if self._token else {}
         try:
-            resp = self._stub.ExtractEmbedding(req, timeout=self._timeout)
-        except grpc.RpcError as exc:
-            logger.warning("ExtractEmbedding RPC error: %s %s", exc.code(), exc.details())
+            resp = self._client.post(
+                self._url,
+                json={"base64": b64, "model": engine, "user": user},
+                headers=headers,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.warning("SpeakerClient HTTP error: %s", exc)
             return None
-        if not resp.success or not resp.embedding:
-            if resp.error_message:
-                logger.warning("ExtractEmbedding failed: %s", resp.error_message)
+
+        data = resp.json()
+        if data.get("error") or not data.get("embeddings"):
+            if data.get("error"):
+                logger.warning("SpeakerClient API error: %s", data["error"])
             return None
-        return np.array(resp.embedding, dtype=np.float32)
+        return np.array(data["embeddings"], dtype=np.float32)
 
     def close(self) -> None:
-        self._channel.close()
+        self._client.close()
 
     def __enter__(self) -> "SpeakerClient":
         return self

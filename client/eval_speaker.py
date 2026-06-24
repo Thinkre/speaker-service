@@ -3,7 +3,7 @@
 Flow:
   1. Parse RTTM to get (start_s, dur_s, speaker) segments
   2. Slice raw WAV PCM for each segment (min 0.5 s)
-  3. Send each segment to the gRPC service → L2-normalised embedding
+  3. Send each segment to the HTTP API → L2-normalised embedding
   4. Build positive pairs (same speaker) and negative pairs (different speaker)
   5. Compute cosine similarity for every pair
   6. Report EER and minDCF
@@ -243,7 +243,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Speaker verification eval using RTTM ground truth")
     parser.add_argument("--data", default="data", help="testset root (contains audio/ rttm/)")
     parser.add_argument("--host", default="localhost")
-    parser.add_argument("--port", type=int, default=50052)
+    parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--engine", default="eresnetv2", choices=["eresnetv2", "campplus"])
     parser.add_argument("--min-dur", type=float, default=0.5, help="min segment duration in seconds")
     parser.add_argument("--max-pairs", type=int, default=5000, help="max pairs per pos/neg class")

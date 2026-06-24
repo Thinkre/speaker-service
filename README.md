@@ -1,6 +1,6 @@
-# speaker_service
+# Speaker Embedding Service
 
-gRPC Speaker Embedding microservice — ERes2NetV2 / CamPlus
+HTTP Speaker Embedding microservice — ERes2NetV2 / CamPlus
 
 ## Quick Start
 
@@ -8,45 +8,36 @@ gRPC Speaker Embedding microservice — ERes2NetV2 / CamPlus
 # Install dependencies
 uv sync
 
-# Generate protobuf stubs
-bash scripts/gen_proto.sh
-
 # Configure environment
 cp .env.example .env
 
-# Start server (defaults to 0.0.0.0:50052)
-uv run python server.py
+# Start server (defaults to 0.0.0.0:8080)
+uv run python api.py
+```
+
+## API
+
+`POST /v1/audio/speaker/embedding` — extract L2-normalized speaker embedding from WAV audio.
+
+See [docs/api.md](docs/api.md) for the full API reference.
+
+### Quick example
+
+```python
+from client.speaker_client import SpeakerClient
+
+with SpeakerClient(host="localhost", port=8080) as client:
+    emb = client.extract_embedding(pcm_bytes, engine="eresnetv2")
+    # emb.shape → (192,)
+    # np.linalg.norm(emb) → 1.0
 ```
 
 ## Evaluation
 
-The `eval_speaker.py` script runs an offline diarization evaluation using the
-local FireRed VAD (not via gRPC) for speech segmentation, then calls the gRPC
-service for speaker embeddings. Results are written to the `reports/` directory
-and compared against the WeSpeaker baseline (DER/JER).
-
 ```bash
-# Evaluate against local alimeeting_mini testset
-uv run python eval_speaker.py \
-    --testset ../data/testsets/alimeeting_mini \
-    --scene near_2spk
-
-# Evaluate against a remote gRPC endpoint
-uv run python eval_speaker.py \
-    --testset ../data/testsets/alimeeting_mini \
-    --scene near_2spk \
-    --host 10.0.0.5 \
-    --port 50052
+# Speaker verification eval using RTTM ground truth
+uv run python client/eval_speaker.py --data data --engine eresnetv2
 ```
-
-Output reports land in `reports/` as JSON files with per-scene DER, JER, Miss,
-False-Alarm, and Confusion breakdown alongside the WeSpeaker offline baseline.
-
-## API
-
-| RPC | Request fields | Response fields |
-|-----|---------------|-----------------|
-| `ExtractEmbedding` | `pcm` (bytes, 16-bit LE mono 16kHz), `engine` (string: `eresnetv2` or `campplus`) | `embedding` (L2-normalized float32 array) |
 
 ## Models
 
@@ -56,5 +47,4 @@ False-Alarm, and Confusion breakdown alongside the WeSpeaker offline baseline.
 | CamPlus | `models/iic/speech_campplus_sv_zh-cn_16k-common` | `CAMPPLUS_MODEL_PATH` |
 
 All model files are stored locally under `models/`. The `models/` directory is
-excluded from git (see `.gitignore`). Do not set ModelScope or HuggingFace
-model ID strings in code — always load from the local paths above.
+excluded from git (see `.gitignore`).

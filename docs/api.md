@@ -12,9 +12,10 @@
 
 #### 请求头
 
-| 字段 | 值 |
-|------|----|
-| `Content-Type` | `application/json` |
+| 字段 | 值 | 必需 |
+|------|----|------|
+| `Content-Type` | `application/json` | 是 |
+| `Authorization` | `Bearer <token>` | 是（`API_TOKEN` 未配置时跳过校验） |
 
 #### 请求体
 
@@ -25,6 +26,7 @@
 | `model` | string | 是 | `"eresnetv2"` \| `"campplus"` |
 | `normalize` | bool | 否 | 是否 L2 归一化，默认 `true` |
 | `user` | string | 是 | 调用方标识，用于日志追踪 |
+| `sample_rate` | number | 否 | 采样率提示；省略时从 WAV 头自动读取 |
 
 音频要求：WAV 格式，16kHz，单声道，int16。非 16kHz 会自动重采样。
 
@@ -32,19 +34,12 @@
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `embeddings` | array | 提取结果，成功时含 1 个元素，失败时为空 |
+| `task` | string | 任务类型，固定为 `"speaker_embedding"` |
+| `task_id` | string | 请求级 UUID，用于追踪 |
+| `duration` | number | 音频时长（秒） |
+| `embeddings` | array[float] | 平铺的 L2 归一化 float32 向量 |
+| `dimensions` | number | 向量维度，eresnetv2=192，campplus=192 |
 | `error` | string | 错误信息，成功时为空字符串 |
-
-**embeddings 元素：**
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | int | 固定为 0 |
-| `start` | float | 片段起始时间（秒），固定为 0.0 |
-| `end` | float | 片段时长（秒） |
-| `confidence` | float | 固定为 1.0 |
-| `embedding` | array[float] | L2 归一化 float32 向量 |
-| `dimensions` | int | 向量维度，eresnetv2=192，campplus=192 |
 
 #### 示例
 
@@ -53,21 +48,18 @@
 {
   "base64": "<wav_base64>",
   "model": "eresnetv2",
-  "user": "diarization"
+  "user": "my-app"
 }
 ```
 
 **成功响应：**
 ```json
 {
-  "embeddings": [{
-    "id": 0,
-    "start": 0.0,
-    "end": 1.0,
-    "confidence": 1.0,
-    "embedding": [0.026, 0.134, 0.107, "..."],
-    "dimensions": 192
-  }],
+  "task": "speaker_embedding",
+  "task_id": "a1b2c3d4e5f67890",
+  "duration": 1.0,
+  "embeddings": [0.026, 0.134, 0.107, "..."],
+  "dimensions": 192,
   "error": ""
 }
 ```
@@ -75,7 +67,11 @@
 **失败响应：**
 ```json
 {
+  "task": "speaker_embedding",
+  "task_id": "a1b2c3d4e5f67890",
+  "duration": 0.0,
   "embeddings": [],
+  "dimensions": 0,
   "error": "Extraction failed (audio too short or model error)."
 }
 ```
@@ -83,7 +79,7 @@
 #### Python 调用示例
 
 ```python
-import base64, io, wave
+import base64, io, os, wave
 import httpx
 import numpy as np
 
@@ -97,56 +93,22 @@ def pcm_to_wav_b64(pcm: bytes, sr: int = 16000) -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 async def extract_embedding(pcm: bytes, model: str = "eresnetv2") -> np.ndarray | None:
+    token = os.environ.get("API_TOKEN", "")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(
             "http://localhost:8080/v1/audio/speaker/embedding",
             json={
                 "base64": pcm_to_wav_b64(pcm),
                 "model": model,
-                "user": "diarization",
+                "user": "my-app",
             },
+            headers=headers,
         )
         data = resp.json()
     if data["error"] or not data["embeddings"]:
         return None
-    return np.array(data["embeddings"][0]["embedding"], dtype=np.float32)
-```
-
----
-
-## gRPC 接口
-
-**端口：** 50052（由 `PORT` 环境变量控制）  
-**Proto：** `proto/speaker.proto`
-
-### ExtractEmbedding
-
-```protobuf
-rpc ExtractEmbedding (ExtractRequest) returns (ExtractResponse);
-
-message ExtractRequest {
-  bytes  pcm    = 1;  // int16 mono 16kHz PCM
-  string engine = 2;  // "eresnetv2" | "campplus"，默认 eresnetv2
-}
-
-message ExtractResponse {
-  repeated float embedding = 1;  // L2-normalized float32 向量
-  int32          dim       = 2;  // 向量维度（192）
-  bool           success   = 3;
-}
-```
-
-#### Python 调用示例
-
-```python
-from client.speaker_client import SpeakerClient
-import numpy as np
-
-with SpeakerClient(host="localhost", port=50052) as client:
-    emb = client.extract_embedding(pcm_bytes, engine="eresnetv2")
-    if emb is not None:
-        print(emb.shape)          # (192,)
-        print(np.linalg.norm(emb)) # ≈ 1.0
+    return np.array(data["embeddings"], dtype=np.float32)
 ```
 
 ---
@@ -158,7 +120,7 @@ with SpeakerClient(host="localhost", port=50052) as client:
 | `eresnetv2` | ~200MB | **19.1%** | 0.0100 | 默认，推荐 |
 | `campplus` | ~50MB | 21.8% | **0.0098** | 轻量，精度略低 |
 
-> 评测数据集：alimeeting_mini（far+near），RTTM ground-truth 切段，collar=0.25s
+> 评测方式：`python client/eval_speaker.py --data data --engine <model>`
 
 ---
 
@@ -167,8 +129,9 @@ with SpeakerClient(host="localhost", port=50052) as client:
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `HTTP_PORT` | `8080` | HTTP 服务端口 |
-| `PORT` | `50052` | gRPC 服务端口 |
 | `HOST` | `0.0.0.0` | 监听地址 |
 | `ERES2NET_MODEL_PATH` | `./models/iic/speech_eres2netv2_sv_zh-cn_16k-common` | ERes2NetV2 模型路径 |
 | `CAMPPLUS_MODEL_PATH` | `./models/iic/speech_campplus_sv_zh-cn_16k-common` | CamPlus 模型路径 |
 | `LOG_LEVEL` | `INFO` | 日志级别 |
+| `API_TOKEN` | (空) | HTTP Bearer token；为空时跳过认证 |
+| `SPEAKER_MODEL_POOL_SIZE` | `max(2, min(cpu//2, 8))` | 模型实例池大小 |

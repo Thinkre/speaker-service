@@ -6,11 +6,16 @@ Request (JSON):
     url         string   optional  WAV audio URL (16kHz mono)
     base64      string   optional  base64-encoded WAV bytes
     model       string   required  "eresnetv2" | "campplus"
-    normalize   bool     optional  always true (L2-normalised by model)
+    normalize   bool     optional  L2 normalisation hint (always applied by engine)
     user        string   required  caller identifier (logged per request)
+    sample_rate number   optional  sample rate hint; read from WAV header if omitted
 
 Response (JSON):
-    embeddings  list     each item: {id, start, end, confidence, embedding, dimensions}
+    task        string   task type ("speaker_embedding")
+    task_id     string   request-scoped UUID
+    duration    number   audio duration in seconds
+    embeddings  list     flat float32 embedding vector (L2-normalised)
+    dimensions  number   vector dimension (192 or 512)
     error       string   non-empty on failure
 """
 from __future__ import annotations
@@ -19,21 +24,38 @@ import asyncio
 import base64
 import io
 import logging
+import os
 import threading
+import uuid
 import wave
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Annotated, Any
 
 import httpx
 import numpy as np
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, field_validator
 from scipy.signal import resample_poly
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+# ── auth ───────────────────────────────────────────────────────────────────────
+API_TOKEN = os.environ.get("API_TOKEN", "")
+
+
+def verify_auth(authorization: Annotated[str, Header(alias="Authorization")] = "") -> None:
+    """Validate Bearer token when API_TOKEN is configured."""
+    if not API_TOKEN:
+        logger.warning("API_TOKEN not set — accepting unauthenticated requests")
+        return
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    token = authorization[7:]
+    if token != API_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 # ── constants ─────────────────────────────────────────────────────────────────
 MAX_PAYLOAD_BYTES = 50 * 1024 * 1024   # 50 MB hard limit
@@ -81,8 +103,9 @@ class EmbeddingRequest(BaseModel):
     url: str | None = None
     base64: str | None = None
     model: str
-    normalize: bool = True   # always L2-normalised; field kept for API compatibility
+    normalize: bool = True   # L2-normalisation hint; always applied by engine
     user: str
+    sample_rate: int | None = None  # optional hint; read from WAV header if omitted
 
     @field_validator("model")
     @classmethod
@@ -92,17 +115,12 @@ class EmbeddingRequest(BaseModel):
         return v
 
 
-class EmbeddingSegment(BaseModel):
-    id: int
-    start: float
-    end: float
-    confidence: float
-    embedding: list[float]
-    dimensions: int
-
-
 class EmbeddingResponse(BaseModel):
-    embeddings: list[EmbeddingSegment]
+    task: str = "speaker_embedding"
+    task_id: str = ""
+    duration: float = 0.0
+    embeddings: list[float] = []   # flat L2-normalised float32 vector
+    dimensions: int = 0            # 192 or 512
     error: str = ""
 
 
@@ -143,8 +161,13 @@ async def ready():
 # ── route ─────────────────────────────────────────────────────────────────────
 
 @app.post("/v1/audio/speaker/embedding", response_model=EmbeddingResponse)
-async def speaker_embedding(req: EmbeddingRequest, http_req: Request) -> EmbeddingResponse:
-    logger.info("embedding request user=%s model=%s", req.user, req.model)
+async def speaker_embedding(
+    req: EmbeddingRequest,
+    http_req: Request,
+    _auth: None = Depends(verify_auth),
+) -> EmbeddingResponse:
+    task_id = uuid.uuid4().hex
+    logger.info("embedding request user=%s model=%s task_id=%s", req.user, req.model, task_id)
 
     # ── load audio bytes ──────────────────────────────────────────────────────
     if req.base64:
@@ -194,14 +217,11 @@ async def speaker_embedding(req: EmbeddingRequest, http_req: Request) -> Embeddi
 
     vec: np.ndarray = result.vector
     return EmbeddingResponse(
-        embeddings=[EmbeddingSegment(
-            id=0,
-            start=0.0,
-            end=round(duration, 3),
-            confidence=1.0,
-            embedding=vec.tolist(),
-            dimensions=len(vec),
-        )],
+        task="speaker_embedding",
+        task_id=task_id,
+        duration=round(duration, 3),
+        embeddings=vec.tolist(),
+        dimensions=len(vec),
     )
 
 
