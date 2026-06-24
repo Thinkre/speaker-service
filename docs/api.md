@@ -23,7 +23,7 @@
 |------|------|------|------|
 | `url` | string | 否 | WAV 音频 URL（与 base64 二选一） |
 | `base64` | string | 否 | base64 编码的 WAV 文件字节（与 url 二选一） |
-| `model` | string | 是 | `"eresnetv2"` \| `"campplus"` |
+| `model` | string | 是 | 固定为 `"eres2netv2"` |
 | `normalize` | bool | 否 | 是否 L2 归一化，默认 `true` |
 | `user` | string | 是 | 调用方标识，用于日志追踪 |
 | `sample_rate` | number | 否 | 采样率提示；省略时从 WAV 头自动读取 |
@@ -38,7 +38,7 @@
 | `task_id` | string | 请求级 UUID，用于追踪 |
 | `duration` | number | 音频时长（秒） |
 | `embeddings` | array[float] | 平铺的 L2 归一化 float32 向量 |
-| `dimensions` | number | 向量维度，eresnetv2=192，campplus=192 |
+| `dimensions` | number | 向量维度，`eres2netv2` 为 192 |
 | `error` | string | 错误信息，成功时为空字符串 |
 
 #### 示例
@@ -47,7 +47,7 @@
 ```json
 {
   "base64": "<wav_base64>",
-  "model": "eresnetv2",
+  "model": "eres2netv2",
   "user": "my-app"
 }
 ```
@@ -92,7 +92,7 @@ def pcm_to_wav_b64(pcm: bytes, sr: int = 16000) -> str:
         wf.writeframes(pcm)
     return base64.b64encode(buf.getvalue()).decode()
 
-async def extract_embedding(pcm: bytes, model: str = "eresnetv2") -> np.ndarray | None:
+async def extract_embedding(pcm: bytes, model: str = "eres2netv2") -> np.ndarray | None:
     token = os.environ.get("API_TOKEN", "")
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -113,14 +113,13 @@ async def extract_embedding(pcm: bytes, model: str = "eresnetv2") -> np.ndarray 
 
 ---
 
-## 模型对比
+## 模型
 
 | 模型 | 参数 | EER | minDCF | 说明 |
 |------|------|-----|--------|------|
-| `eresnetv2` | ~200MB | **19.1%** | 0.0100 | 默认，推荐 |
-| `campplus` | ~50MB | 21.8% | **0.0098** | 轻量，精度略低 |
+| `eres2netv2` | ~200MB | **19.1%** | 0.0100 | 唯一公开模型名 |
 
-> 评测方式：`python client/eval_speaker.py --data data --engine <model>`
+> 评测方式：`python client/eval_speaker.py --data data --engine eres2netv2`
 
 ---
 
@@ -131,7 +130,6 @@ async def extract_embedding(pcm: bytes, model: str = "eresnetv2") -> np.ndarray 
 | `HTTP_PORT` | `8080` | HTTP 服务端口 |
 | `HOST` | `0.0.0.0` | 监听地址 |
 | `ERES2NET_MODEL_PATH` | `./models/iic/speech_eres2netv2_sv_zh-cn_16k-common` | ERes2NetV2 模型路径 |
-| `CAMPPLUS_MODEL_PATH` | `./models/iic/speech_campplus_sv_zh-cn_16k-common` | CamPlus 模型路径 |
 | `LOG_LEVEL` | `INFO` | 日志级别 |
 | `API_TOKEN` | (空) | HTTP Bearer token；为空时跳过认证 |
 | `SPEAKER_MODEL_POOL_SIZE` | `max(2, min(cpu//2, 8))` | 模型实例池大小 |
