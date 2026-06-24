@@ -1,5 +1,6 @@
 models/*
 !models/iic/
+!models/onnx/
 models/iic/*
 !models/iic/speech_eres2netv2_sv_zh-cn_16k-common/
 reports/
