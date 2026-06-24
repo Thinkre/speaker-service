@@ -2,17 +2,22 @@ FROM harbor.intra.ke.com/keci/python:3.12.3
 
 WORKDIR /app
 
+# Apt mirror (Aliyun)
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null; \
+    sed -i 's|archive.ubuntu.com|mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null; \
+    true
+
 # System dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libsndfile1 libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv
-RUN pip install --no-cache-dir uv
+# Install uv (Tsinghua PyPI mirror)
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple uv
 
-# Python dependencies
+# Python dependencies (Tsinghua mirror)
 COPY pyproject.toml uv.lock ./
-RUN uv sync --no-dev --frozen
+RUN uv sync --no-dev --frozen --index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
 # Application source
 COPY api.py ./
