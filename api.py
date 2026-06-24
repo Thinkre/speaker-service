@@ -74,8 +74,8 @@ def _get_engine(model: str):
     if key not in _engines:
         with _engines_lock:
             if key not in _engines:
-                from engine.eres2net import ERes2NetEngine
-                _engines[key] = ERes2NetEngine()
+                from engine.onnx_engine import ONNXSpeakerEngine
+                _engines[key] = ONNXSpeakerEngine()
     return _engines[key]
 
 
