@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple uv
 
 # Python dependencies (Tsinghua mirror)
 COPY pyproject.toml uv.lock ./
+ENV UV_HTTP_TIMEOUT=300
 RUN uv sync --no-dev --frozen --index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
 # Application source
