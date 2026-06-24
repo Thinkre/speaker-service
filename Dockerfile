@@ -1,6 +1,18 @@
-FROM speaker-service-base
+FROM harbor.intra.ke.com/keci/python:3.12.3
 
 WORKDIR /app
+
+# System dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsndfile1 libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+RUN pip install --no-cache-dir uv
+
+# Python dependencies
+COPY pyproject.toml uv.lock ./
+RUN uv sync --no-dev --frozen
 
 # Application source
 COPY api.py ./
