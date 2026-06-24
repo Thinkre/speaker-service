@@ -5,7 +5,7 @@ POST /v1/audio/speaker/embedding
 Request (JSON):
     url         string   optional  WAV audio URL (16kHz mono)
     base64      string   optional  base64-encoded WAV bytes
-    model       string   required  "eresnetv2" | "campplus"
+    model       string   required  "eres2netv2"
     normalize   bool     optional  L2 normalisation hint (always applied by engine)
     user        string   required  caller identifier (logged per request)
     sample_rate number   optional  sample rate hint; read from WAV header if omitted
@@ -15,7 +15,7 @@ Response (JSON):
     task_id     string   request-scoped UUID
     duration    number   audio duration in seconds
     embeddings  list     flat float32 embedding vector (L2-normalised)
-    dimensions  number   vector dimension (192 or 512)
+    dimensions  number   vector dimension (192)
     error       string   non-empty on failure
 """
 from __future__ import annotations
@@ -60,6 +60,7 @@ def verify_auth(authorization: Annotated[str, Header(alias="Authorization")] = "
 # ── constants ─────────────────────────────────────────────────────────────────
 MAX_PAYLOAD_BYTES = 50 * 1024 * 1024   # 50 MB hard limit
 INFERENCE_TIMEOUT = 30.0               # seconds before 504
+SUPPORTED_MODEL = "eres2netv2"
 
 # ── engine cache (thread-safe) ────────────────────────────────────────────────
 _engines: dict[str, Any] = {}
@@ -68,17 +69,13 @@ _engines_lock = threading.Lock()
 
 def _get_engine(model: str):
     key = model.lower()
+    if key != SUPPORTED_MODEL:
+        raise HTTPException(status_code=400, detail=f"Unknown model: {model!r}.")
     if key not in _engines:
         with _engines_lock:
             if key not in _engines:
-                if key in ("eresnetv2", "eres2net"):
-                    from engine.eres2net import ERes2NetEngine
-                    _engines[key] = ERes2NetEngine()
-                elif key == "campplus":
-                    from engine.campplus import CamPlusEngine
-                    _engines[key] = CamPlusEngine()
-                else:
-                    raise HTTPException(status_code=400, detail=f"Unknown model: {model!r}.")
+                from engine.eres2net import ERes2NetEngine
+                _engines[key] = ERes2NetEngine()
     return _engines[key]
 
 
@@ -110,9 +107,9 @@ class EmbeddingRequest(BaseModel):
     @field_validator("model")
     @classmethod
     def _check_model(cls, v: str) -> str:
-        if v.lower() not in ("eresnetv2", "eres2net", "campplus"):
-            raise ValueError(f"model must be eresnetv2 or campplus, got {v!r}")
-        return v
+        if v.lower() != SUPPORTED_MODEL:
+            raise ValueError(f"model must be eres2netv2, got {v!r}")
+        return SUPPORTED_MODEL
 
 
 class EmbeddingResponse(BaseModel):
@@ -120,7 +117,7 @@ class EmbeddingResponse(BaseModel):
     task_id: str = ""
     duration: float = 0.0
     embeddings: list[float] = []   # flat L2-normalised float32 vector
-    dimensions: int = 0            # 192 or 512
+    dimensions: int = 0            # 192
     error: str = ""
 
 
@@ -152,7 +149,7 @@ async def health():
 @app.get("/ready")
 async def ready():
     try:
-        _get_engine("eresnetv2")
+        _get_engine(SUPPORTED_MODEL)
         return {"status": "ready"}
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc))

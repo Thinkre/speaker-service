@@ -45,7 +45,7 @@ def _slice_wav(wav_path: Path, start_s: float, end_s: float) -> tuple[bytes, byt
 def test_http_sdk(pcm: bytes) -> np.ndarray | None:
     print("\n── HTTP SDK ────────────────────────────────────")
     with SpeakerClient(host="localhost", port=8080) as client:
-        emb = client.extract_embedding(pcm, engine="eresnetv2")
+        emb = client.extract_embedding(pcm, engine="eres2netv2")
     if emb is None:
         print("  FAIL: returned None")
         return None
@@ -60,7 +60,7 @@ async def test_http_raw(wav_bytes: bytes) -> np.ndarray | None:
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(
             HTTP_URL,
-            json={"base64": b64, "model": "eresnetv2", "user": "test"},
+            json={"base64": b64, "model": "eres2netv2", "user": "test"},
             headers=headers,
         )
     data = resp.json()

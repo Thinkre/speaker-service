@@ -42,7 +42,7 @@ class SpeakerClient:
     def extract_embedding(
         self,
         pcm: bytes,
-        engine: str = "eresnetv2",
+        engine: str = "eres2netv2",
         user: str = "speaker-client",
     ) -> np.ndarray | None:
         """Extract L2-normalized speaker embedding from int16 mono 16kHz PCM.
