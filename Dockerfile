@@ -12,13 +12,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsndfile1 libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv (Tsinghua PyPI mirror)
-RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple uv
-
-# Python dependencies (Tsinghua mirror)
-COPY pyproject.toml uv.lock ./
-ENV UV_HTTP_TIMEOUT=300
-RUN uv sync --no-dev --frozen --index-url https://pypi.tuna.tsinghua.edu.cn/simple
+# Python dependencies (Tsinghua PyPI mirror)
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
 
 # Application source
 COPY api.py ./
