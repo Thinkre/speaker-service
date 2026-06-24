@@ -1,4 +1,7 @@
-models/
+models/*
+!models/iic/
+models/iic/*
+!models/iic/speech_eres2netv2_sv_zh-cn_16k-common/
 reports/
 data/
 tmp/
@@ -10,3 +13,4 @@ __pycache__/
 *.egg-info/
 dist/
 *.log
+*.swp
